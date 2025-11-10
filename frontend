@@ -1,0 +1,266 @@
+//index.html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="MERN OAuth2 Login Demo"
+    />
+    <title>MERN OAuth2 App</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
+
+
+// client/src/components/LoginButtons.jsx
+import React from 'react';
+
+const LoginButtons = () => {
+  const backendUrl = 'http://localhost:5000/api/auth';
+
+  const handleGoogleLogin = () => {
+    window.location.href = `${backendUrl}/google`;
+  };
+
+  const handleFacebookLogin = () => {
+    window.location.href = `${backendUrl}/facebook`;
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center space-y-4 mt-10">
+      <h2 className="text-xl font-semibold">Login with Social Account</h2>
+
+      <button
+        onClick={handleGoogleLogin}
+        className="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-lg shadow"
+      >
+        Continue with Google
+      </button>
+
+      <button
+        onClick={handleFacebookLogin}
+        className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg shadow"
+      >
+        Continue with Facebook
+      </button>
+    </div>
+  );
+};
+
+export default LoginButtons;
+
+
+// client/src/components/Profile.jsx
+import React from 'react';
+import { useAuth } from '../context/AuthContext';
+
+const Profile = () => {
+  const { user, logout } = useAuth();
+
+  if (!user) {
+    return <p className="text-center mt-10 text-gray-600">No user data found.</p>;
+  }
+
+  return (
+    <div className="flex flex-col items-center mt-10 space-y-4">
+      <img
+        src={user.picture}
+        alt={user.name}
+        className="w-24 h-24 rounded-full shadow-md"
+      />
+      <h2 className="text-2xl font-semibold">{user.name}</h2>
+      <p className="text-gray-700">{user.email}</p>
+
+      <button
+        onClick={logout}
+        className="mt-4 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg"
+      >
+        Logout
+      </button>
+    </div>
+  );
+};
+
+export default Profile;
+
+
+// client/src/context/AuthContext.jsx
+import React, { createContext, useState, useEffect, useContext } from 'react';
+import api from '../utils/api';
+
+const AuthContext = createContext();
+
+// Hook for easy access
+export const useAuth = () => useContext(AuthContext);
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch the current logged-in user
+  const fetchUser = async () => {
+    try {
+      const res = await api.get('/users/me');
+      setUser(res.data);
+    } catch (err) {
+      setUser(null); // not logged in
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUser(); // run on page load
+  }, []);
+
+  const logout = async () => {
+    try {
+      await api.post('/auth/logout');
+      setUser(null);
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, loading, fetchUser, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+
+// client/src/pages/Dashboard.jsx
+import React from 'react';
+import { useAuth } from '../context/AuthContext';
+import Profile from '../components/Profile';
+
+const Dashboard = () => {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <h2 className="text-center mt-10">Loading...</h2>;
+  }
+
+  if (!user) {
+    return (
+      <div className="text-center mt-10">
+        <h2>You are not logged in.</h2>
+        <a href="/" className="text-blue-500 underline hover:text-blue-700">
+          Go back to login
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col items-center bg-gray-50">
+      <h1 className="text-3xl font-bold mt-10">Dashboard</h1>
+      <Profile /> {/* 👈 This shows the logout button */}
+    </div>
+  );
+};
+
+export default Dashboard;
+
+
+// client/src/pages/Home.jsx
+import React from 'react';
+import LoginButtons from '../components/LoginButtons';
+
+const Home = () => {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
+      <h1 className="text-3xl font-bold mb-6">Welcome to MERN OAuth2 Demo</h1>
+      <LoginButtons />
+    </div>
+  );
+};
+
+export default Home;
+
+
+// client/src/utils/api.js
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: 'http://localhost:5000/api',
+  withCredentials: true, // 👈 important for sending cookies
+});
+
+export default api;
+
+
+// client/src/App.js
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Home from './pages/Home';
+import Dashboard from './pages/Dashboard';
+
+const App = () => {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+      </Routes>
+    </Router>
+  );
+};
+
+export default App;
+
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import { AuthProvider } from './context/AuthContext';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <AuthProvider>
+      <App />
+    </AuthProvider>
+  </React.StrictMode>
+);
+
+
+//Package.json
+{
+  "name": "client",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.6.7",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
