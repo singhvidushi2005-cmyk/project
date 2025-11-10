@@ -1,0 +1,49 @@
+mern-oauth2/
+│
+├── server/                ← Node.js + Express + MongoDB backend
+│   ├── config/
+│   │   ├── db.js          ← MongoDB connection setup
+│   │   ├── passport.js    ← Google & Facebook OAuth strategy setup
+│   │
+│   ├── controllers/
+│   │   ├── authController.js  ← Handles login, callback, logout, etc.
+│   │
+│   ├── middleware/
+│   │   ├── authMiddleware.js  ← Verifies JWTs and protects routes
+│   │   └── errorHandler.js
+│   │
+│   ├── models/
+│   │   ├── User.js        ← MongoDB User schema (local + OAuth info)
+│   │
+│   ├── routes/
+│   │   ├── authRoutes.js  ← /api/auth routes (Google/Facebook/login/logout)
+│   │   └── userRoutes.js
+│   │
+│   ├── utils/
+│   │   ├── generateJWT.js ← Helper for signing and verifying JWTs
+│   │
+│   ├── .env               ← Environment variables (API keys, secrets, etc.)
+│   ├── server.js          ← Main Express app entry point
+│   ├── package.json
+│
+│
+├── client/                ← React frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── LoginButtons.jsx   ← “Continue with Google/Facebook” buttons
+│   │   │   ├── Profile.jsx        ← Displays user info after login
+│   │   │
+│   │   ├── context/
+│   │   │   ├── AuthContext.jsx    ← React context to store auth state
+│   │   │
+│   │   ├── pages/
+│   │   │   ├── Home.jsx
+│   │   │   ├── Dashboard.jsx
+│   │   │
+│   │   ├── utils/
+│   │   │   ├── api.js             ← Axios instance, baseURL setup
+│   │   │
+│   │   ├── App.js
+│   │   ├── index.js
+│   ├── package.json
