@@ -1,0 +1,386 @@
+@@ -0,0 +1,385 @@
+// server/config/db.js
+const mongoose = require('mongoose');
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('✅ MongoDB connected');
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+
+
+// server/controllers/authController.js
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+const axios = require('axios');
+
+// Helper to create JWT
+const createToken = (user) => {
+  return jwt.sign(
+    { id: user._id, email: user.email, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: '1h' }
+  );
+};
+
+// ---------------------- Google OAuth ----------------------
+const googleAuth = (req, res) => {
+  const redirect_uri =
+    'https://accounts.google.com/o/oauth2/v2/auth?' +
+    new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      redirect_uri: `${process.env.SERVER_URL}/api/auth/google/callback`, 
+      response_type: 'code',
+      scope: 'openid email profile',
+      access_type: 'offline',
+      prompt: 'consent',
+    }).toString();
+
+  res.redirect(redirect_uri);
+};
+
+const googleCallback = async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.status(400).json({ error: 'No code provided' });
+
+  try {
+    // Exchange code for tokens
+    const tokenRes = await axios.post('https://oauth2.googleapis.com/token', null, {
+      params: {
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: `${process.env.SERVER_URL}/api/auth/google/callback`, // ✅ FIXED
+        grant_type: 'authorization_code',
+      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+
+    const { id_token } = tokenRes.data;
+
+    // Decode ID token
+    const userInfo = JSON.parse(Buffer.from(id_token.split('.')[1], 'base64').toString());
+    let user = await User.findOne({ email: userInfo.email });
+
+    if (!user) {
+      user = await User.create({
+        name: userInfo.name,
+        email: userInfo.email,
+        picture: userInfo.picture,
+        googleId: userInfo.sub,
+      });
+    }
+
+    // Create JWT
+    const token = createToken(user);
+
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax',
+    });
+
+    // Redirect to frontend dashboard
+    res.redirect(`${process.env.CLIENT_URL}/dashboard`);
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: 'Google login failed' });
+  }
+};
+
+// ---------------------- Facebook OAuth ----------------------
+const facebookAuth = (req, res) => {
+  const redirect_uri =
+    'https://www.facebook.com/v17.0/dialog/oauth?' +
+    new URLSearchParams({
+      client_id: process.env.FACEBOOK_CLIENT_ID,
+      redirect_uri: `${process.env.SERVER_URL}/api/auth/facebook/callback`, // ✅ FIXED
+      state: 'some_random_state',
+      scope: 'email public_profile',
+    }).toString();
+
+  res.redirect(redirect_uri);
+};
+
+const facebookCallback = async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.status(400).json({ error: 'No code provided' });
+
+  try {
+    // Exchange code for access token
+    const tokenRes = await axios.get('https://graph.facebook.com/v17.0/oauth/access_token', {
+      params: {
+        client_id: process.env.FACEBOOK_CLIENT_ID,
+        client_secret: process.env.FACEBOOK_CLIENT_SECRET,
+        redirect_uri: `${process.env.SERVER_URL}/api/auth/facebook/callback`, // ✅ FIXED
+        code,
+      },
+    });
+
+    const { access_token } = tokenRes.data;
+
+    // Get user info
+    const userRes = await axios.get('https://graph.facebook.com/me', {
+      params: {
+        fields: 'id,name,email,picture',
+        access_token,
+      },
+    });
+
+    const userInfo = userRes.data;
+    let user = await User.findOne({ email: userInfo.email });
+
+    if (!user) {
+      user = await User.create({
+        name: userInfo.name,
+        email: userInfo.email,
+        picture: userInfo.picture?.data?.url,
+        facebookId: userInfo.id,
+      });
+    }
+
+    // Create JWT
+    const token = createToken(user);
+
+    // Set cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax',
+    });
+
+    // Redirect to frontend dashboard
+    res.redirect(`${process.env.CLIENT_URL}/dashboard`);
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: 'Facebook login failed' });
+  }
+};
+
+// ---------------------- Logout ----------------------
+const logout = (req, res) => {
+  res.clearCookie('token');
+  res.json({ message: 'Logged out successfully' });
+};
+
+module.exports = {
+  googleAuth,
+  googleCallback,
+  facebookAuth,
+  facebookCallback,
+  logout,
+};
+
+
+// server/middleware/authMiddleware.js
+const jwt = require('jsonwebtoken');
+
+const authMiddleware = (req, res, next) => {
+  // Try to get token from cookie or Authorization header
+  const token =
+    req.cookies?.token ||
+    req.header('Authorization')?.replace('Bearer ', '');
+
+  if (!token) {
+    return res.status(401).json({ message: 'Not authenticated' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // { id, email, role }
+    next();
+  } catch (err) {
+    console.error('JWT verification failed:', err.message);
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+};
+
+module.exports = authMiddleware;
+
+
+// server/middleware/errorHandler.js
+
+// A centralized Express error handler
+const errorHandler = (err, req, res, next) => {
+  console.error('🔥 Error:', err.stack);
+
+  const statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 500;
+
+  res.status(statusCode).json({
+    message: err.message || 'Internal Server Error',
+    // Include stack only in development for debugging
+    stack: process.env.NODE_ENV === 'production' ? '🥞 Hidden' : err.stack,
+  });
+};
+
+module.exports = errorHandler;
+
+
+// server/models/User.js
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema(
+  {
+    name: { type: String },
+    email: { type: String, required: true, unique: true },
+    password: { type: String }, // for local login (optional)
+    picture: { type: String },
+
+    // OAuth provider info
+    googleId: { type: String },
+    facebookId: { type: String },
+
+    // Role-based access
+    role: { type: String, enum: ['user', 'admin'], default: 'user' },
+
+    // Timestamps for auditing
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('User', userSchema);
+
+
+// server/routes/authRoutes.js
+const express = require('express');
+const router = express.Router();
+
+// controllers will be added later
+const { googleAuth, googleCallback, facebookAuth, facebookCallback, logout } = require('../controllers/authController');
+
+// Google OAuth endpoints
+router.get('/google', googleAuth);
+router.get('/google/callback', googleCallback);
+
+// Facebook OAuth endpoints
+router.get('/facebook', facebookAuth);
+router.get('/facebook/callback', facebookCallback);
+
+// Logout
+router.post('/logout', logout);
+
+module.exports = router;
+
+
+// server/routes/userRoutes.js
+const express = require('express');
+const router = express.Router();
+const User = require('../models/User');
+const authMiddleware = require('../middleware/authMiddleware');
+
+// @route   GET /api/users/me
+// @desc    Get logged-in user info
+// @access  Private
+router.get('/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    res.json(user);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+module.exports = router;
+
+
+//.env
+PORT=5000
+MONGO_URI=mongodb://localhost:27017/oauth2_demo
+JWT_SECRET=dev_jwt_secret
+COOKIE_SECRET=dev_cookie_secret
+SERVER_URL=http://localhost:5000
+CLIENT_URL=http://localhost:3000
+GOOGLE_CLIENT_ID="YOUR_CLIENT_ID "
+GOOGLE_CLIENT_SECRET="YOUR_CLIENT_SECRET"
+
+
+//package.json
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.19.3",
+    "morgan": "^1.10.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
+
+
+// server/server.js
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const morgan = require('morgan');
+const connectDB = require('./config/db');
+
+const app = express();
+
+// Connect to MongoDB
+connectDB();
+
+// Middleware
+app.use(express.json());
+app.use(cookieParser());
+app.use(helmet());
+app.use(morgan('dev'));
+app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+  })
+);
+
+// Test route
+app.get('/', (req, res) => {
+  res.json({ message: 'Server is running 🚀' });
+});
+
+// Routes
+app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/users', require('./routes/userRoutes'));
+
+// ✅ Add this part BELOW your routes:
+const errorHandler = require('./middleware/errorHandler');
+app.use(errorHandler); // <-- must be last middleware
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
